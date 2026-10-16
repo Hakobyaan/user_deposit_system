@@ -25,8 +25,6 @@ export const module: Router = {
               transactionId: transaction.id, userId, amount, balance
             },
           };
-          // Cache the exact response before sending it, so a retry with the
-          // same Idempotency-Key replays this verbatim instead of depositing again.
           await saveIdempotentResult(req.idempotencyKey!, 201, body);
           res.status(201).json(body);
         } catch (err) {

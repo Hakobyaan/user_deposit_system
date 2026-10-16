@@ -55,6 +55,38 @@ npm install
 npm run dev
 ```
 
+## One command: `npm run all`
+
+From the repo root (Docker Desktop must be running):
+
+```bash
+npm run all
+```
+
+Starts the whole backend stack in Docker, waits until wallet-service is
+healthy, seeds user1–user5, then serves the web app at
+http://localhost:5173. Ctrl+C stops everything. If Docker Desktop isn't
+running, the script starts it and waits. In this mode Postgres/Redis/AMQP
+ports aren't published on the host (`docker-compose.all.yml`), so a local
+Homebrew Postgres/Redis on 5432/6379 doesn't conflict. `npm run logs` tails the
+service logs, `npm run stop` stops the containers.
+
+## Web frontend
+
+A React + Vite dashboard lives in [`web/`](./web): demo login, animated
+balance + chart, deposits (with an auto-generated `Idempotency-Key`),
+transfers, filtered history, CSV export and PDF statements.
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:5173
+```
+
+Requests to `/api/*` are proxied to wallet-service on `http://localhost:3000`
+(override with `API_TARGET=http://host:port npm run dev`). Sign in as
+`user1`…`user5` (password = username).
+
 ## Interactive docs (Swagger)
 
 http://localhost:3000/docs — try every endpoint below from the browser instead of curl.

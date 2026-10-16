@@ -35,3 +35,6 @@ export const TRANSACTIONS_PAGE_CACHE_TTL_SECONDS = Number(
 );
 
 export const REPORTS_DIR = process.env.REPORTS_DIR ?? './storage/reports';
+
+export const EVENT_LOG_MAX = Number(process.env.EVENT_LOG_MAX ?? 1000);
+export const FAULT_INJECTION = process.env.FAULT_INJECTION === 'true';

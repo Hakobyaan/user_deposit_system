@@ -1,4 +1,5 @@
 import logger from './logger';
+import { trace } from './trace';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -19,6 +20,7 @@ export async function withDeadlockRetry<T>(fn: () => Promise<T>, attempts = 3): 
 
       if (code === '40P01' && attempt < attempts) {
         logger.warn(`Deadlock detected, retrying (attempt ${attempt}/${attempts})`);
+        trace('warn', 'deadlock.retry', `Postgres aborted a deadlocked transaction (40P01) — retrying ${attempt}/${attempts}`);
         await sleep(50 * attempt);
         continue;
       }

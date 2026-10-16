@@ -44,10 +44,6 @@ export const module: Router = {
         const dbStream = client.query(queryStream);
         const csv = new CsvTransform();
 
-        // The handler's promise only resolves once the HTTP response has
-        // actually finished (or the client disconnected), so the generic
-        // response wrapper — which checks res.headersSent right after
-        // awaiting this handler — never races the still-streaming body.
         await new Promise<void>((resolve) => {
           let released = false;
           const cleanup = () => {
@@ -69,18 +65,12 @@ export const module: Router = {
             cleanup();
             resolve();
           });
-          // Client aborted mid-download — stop reading from Postgres
-          // immediately instead of draining the whole table into a void.
           res.once('close', () => {
             dbStream.destroy();
             cleanup();
             resolve();
           });
 
-          // pipe()'d chain: when res.write() returns false, the pipe pauses
-          // csv, which pauses dbStream, which stops issuing FETCH batches
-          // against the cursor — backpressure propagates end-to-end with
-          // no unbounded buffering anywhere in the chain.
           dbStream.pipe(csv).pipe(res);
         });
       },

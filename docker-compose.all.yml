@@ -1,0 +1,12 @@
+# Used by `npm run all` on top of docker-compose.yml. In that mode every app
+# runs inside Docker and reaches Postgres/Redis/RabbitMQ over the compose
+# network, so their ports don't need to be published on the host — which
+# avoids clashing with a locally installed Postgres/Redis (e.g. Homebrew).
+services:
+  postgres:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  rabbitmq:
+    ports: !override
+      - "15672:15672" # management UI only

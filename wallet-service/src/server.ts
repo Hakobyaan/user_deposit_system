@@ -12,6 +12,7 @@ import { SingleRoute, RequestMethodsLow, MiddlewareHandler } from './types/modul
 import { Utility } from './types/request';
 import { convertModuleToRoute } from './utils/convertor';
 import { EXTENSION } from './utils/variables';
+import { traceContext } from './core/trace.middleware';
 
 class Server {
   public server = express();
@@ -29,6 +30,7 @@ class Server {
       extended: false
     }));
     this.server.use(morgan('dev'));
+    this.server.use(traceContext);
 
     this.server.get('/health', (_req, res) => res.json({
       ok: true

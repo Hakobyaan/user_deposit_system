@@ -15,9 +15,6 @@ const SIMULATED_FAILURE_RATE = Number(process.env.SIMULATED_FAILURE_RATE ?? 0.2)
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Stands in for a real email provider call — logs, waits a second, and
- *  fails at random SIMULATED_FAILURE_RATE of the time so the retry/DLQ
- *  path in this file actually gets exercised. */
 async function simulateSendEmail(payload: unknown): Promise<void> {
   logger.info(`Sending deposit notification email... ${JSON.stringify(payload)}`);
   await sleep(1000);
@@ -42,8 +39,6 @@ async function main() {
     durable: true
   });
 
-  // Only one unacked message in flight at a time — makes the ack-only-on-
-  // success guarantee (and the retry pacing) easy to reason about.
   await channel.prefetch(1);
 
   logger.info(`Waiting for '${DEPOSIT_ROUTING_KEY}' events on '${NOTIFICATION_QUEUE}'...`);
@@ -57,16 +52,11 @@ async function main() {
     try {
       const payload = JSON.parse(msg.content.toString());
       await simulateSendEmail(payload);
-      // Acknowledge ONLY after the message is fully, successfully handled —
-      // if this process crashes before this point, RabbitMQ redelivers it.
       channel.ack(msg);
     } catch (err) {
       logger.warn(`Attempt ${attemptNumber}/${MAX_RETRY_ATTEMPTS} failed: ${(err as Error).message}`);
 
       if (attemptNumber < MAX_RETRY_ATTEMPTS) {
-        // Remove the original and republish a copy with the attempt count
-        // stamped in, after a short delay — avoids both an unbounded
-        // in-broker requeue loop and a hot retry with no backoff at all.
         channel.ack(msg);
         await sleep(RETRY_DELAY_MS);
         channel.sendToQueue(NOTIFICATION_QUEUE, msg.content, {

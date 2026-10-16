@@ -7,19 +7,16 @@ import { withDeadlockRetry } from '../../utils/withDeadlockRetry';
 import rabbitmq from '../../services/rabbitmq';
 import logger from '../../utils/logger';
 import { DEPOSIT_ROUTING_KEY } from '../../utils/variables';
+import { faultPoint, trace } from '../../utils/trace';
 
 class DepositService {
   public async deposit(userId: number, amount: number) {
+    const users = [userId];
+    const label = `user${userId} +$${amount.toFixed(2)}`;
+    trace('info', 'deposit.begin', `BEGIN deposit ${label}`, { users, data: { amount } });
+
     const result = await withDeadlockRetry(() => sequelize.transaction(
-      // REPEATABLE READ: SELECT ... FOR UPDATE already serializes writers on
-      // this row (that alone prevents the classic lost-update race), but
-      // REPEATABLE READ additionally freezes this transaction's own view of
-      // the row for its whole duration — no other statement in this same
-      // transaction can see a different balance mid-flight, which matters
-      // once more reads/checks (e.g. daily limits) get added around the
-      // update. READ COMMITTED would be fine for this single UPDATE alone;
-      // REPEATABLE READ is the cheap insurance for what this transaction
-      // will likely grow into.
+
       {
         isolationLevel: SequelizeTransaction.ISOLATION_LEVELS.REPEATABLE_READ
       },
@@ -30,16 +27,19 @@ class DepositService {
           lock:        t.LOCK.UPDATE, // SELECT ... FOR UPDATE
         });
         if (!account) throw new NotFound(`No account found for userId ${userId}`);
+        trace('info', 'deposit.lock', `Locked account user${userId} (FOR UPDATE)`, { users });
 
+        const before = account.balance;
         const newBalance = (Number(account.balance) + amount).toFixed(2);
 
-        // 2-table ACID update: both writes share transaction `t`, so a
-        // failure on either one rolls back both.
         await account.update({
           balance: newBalance
         }, {
           transaction: t
         });
+        trace('info', 'deposit.credit', `Credit user${userId}: ${before} → ${newBalance}`, { users, data: { balance: newBalance } });
+        faultPoint('deposit.after-credit');
+
         const transaction = await TransactionModel.create({
           userId,
           amount:       amount.toFixed(2),
@@ -49,21 +49,33 @@ class DepositService {
           transaction: t
         });
 
+        trace('info', 'deposit.row', `Inserted deposit #${transaction.id} (user${userId})`, { users, data: { id: transaction.id } });
+        faultPoint('deposit.before-commit');
+
         return {
           transaction, balance: newBalance
         };
       }
-    ));
+    )).catch((err) => {
+      trace('error', 'deposit.rollback', `ROLLBACK deposit ${label}: ${(err as Error).message}`, { users });
+      throw err;
+    });
+    trace('success', 'deposit.commit', `COMMIT deposit ${label} — balance ${result.balance}`, {
+      users, data: { transactionId: result.transaction.id, amount, balance: result.balance }
+    });
 
-    // The deposit has already committed — a notification hiccup must never
-    // undo it, so this is logged, not thrown.
     rabbitmq.publish(DEPOSIT_ROUTING_KEY, {
       userId,
       amount,
       balance:       result.balance,
       transactionId: result.transaction.id,
       occurredAt:    new Date().toISOString(),
-    }).catch((err) => logger.error('Failed to publish deposit.created', err));
+    })
+      .then(() => trace('info', 'rabbitmq.publish', `Published ${DEPOSIT_ROUTING_KEY} for deposit #${result.transaction.id}`, { users }))
+      .catch((err) => {
+        logger.error('Failed to publish deposit.created', err);
+        trace('error', 'rabbitmq.publish', `Failed to publish ${DEPOSIT_ROUTING_KEY}: ${(err as Error).message}`, { users });
+      });
 
     return result;
   }

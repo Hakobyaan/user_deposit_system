@@ -1,0 +1,9 @@
+{
+  "name": "user-deposit-system",
+  "private": true,
+  "scripts": {
+    "all": "bash scripts/all.sh",
+    "stop": "COMPOSE_FILE=docker-compose.yml:docker-compose.all.yml docker compose stop",
+    "logs": "COMPOSE_FILE=docker-compose.yml:docker-compose.all.yml docker compose logs -f wallet-service notification-service"
+  }
+}

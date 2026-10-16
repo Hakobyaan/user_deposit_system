@@ -2,6 +2,7 @@ import { MiddlewareHandler } from '../types/module';
 import { BadRequest } from '../utils/errors';
 import redis from '../services/redis';
 import { IDEMPOTENCY_LOCK_TTL_SECONDS, IDEMPOTENCY_RESULT_TTL_SECONDS } from '../utils/variables';
+import { trace } from '../utils/trace';
 
 interface IdempotencyRecord {
   processing: boolean;
@@ -11,18 +12,12 @@ interface IdempotencyRecord {
 
 const cacheKeyFor = (key: string) => `idempotency:${key}`;
 
-/**
- * Requires an Idempotency-Key header. A request replayed with the same key
- * either short-circuits with the cached result of the first attempt (no
- * duplicate deposit is ever performed) or, if the first attempt is still
- * in-flight, gets a 409 rather than racing it.
- *
- * The route handler is responsible for calling `finalizeIdempotentResponse`
- * once it knows the real outcome — this middleware only claims the key.
- */
+
 export const idempotencyGuard: MiddlewareHandler = async (req, res, next) => {
   const key = req.headers['idempotency-key'];
+  const users = Number(req.body?.userId) ? [Number(req.body.userId)] : undefined;
   if (!key || typeof key !== 'string') {
+    trace('warn', 'idempotency.missing', 'Rejected: Idempotency-Key header is missing', { users });
     return next(new BadRequest('Idempotency-Key header is required'));
   }
 
@@ -30,11 +25,13 @@ export const idempotencyGuard: MiddlewareHandler = async (req, res, next) => {
   const existing = await redis.get<IdempotencyRecord>(cacheKey);
   if (existing) {
     if (existing.processing) {
+      trace('warn', 'idempotency.in-flight', `Key ${key} is still being processed → 409`, { users, data: { key } });
       res.status(409).json({
         ok: false, status: 409, message: 'A request with this Idempotency-Key is still being processed'
       });
       return;
     }
+    trace('info', 'idempotency.replay', `Key ${key} already completed → replaying stored ${existing.status ?? 200} response, no new write`, { users, data: { key } });
     res.status(existing.status ?? 200).json(existing.body);
     return;
   }
@@ -47,26 +44,26 @@ export const idempotencyGuard: MiddlewareHandler = async (req, res, next) => {
     IDEMPOTENCY_LOCK_TTL_SECONDS
   );
   if (!claimed) {
-    // Lost the race to another concurrent request with the same key —
-    // replay whatever it ends up producing instead of double-processing.
+    trace('warn', 'idempotency.in-flight', `Key ${key} lost the SET NX race → 409`, { users, data: { key } });
     res.status(409).json({
       ok: false, status: 409, message: 'A request with this Idempotency-Key is still being processed'
     });
     return;
   }
 
+  trace('info', 'idempotency.claim', `Claimed key ${key} (SET NX)`, { users, data: { key } });
   req.idempotencyKey = cacheKey;
   next();
 };
 
-/** Called by the handler once the deposit has actually committed. */
 export async function saveIdempotentResult(cacheKey: string, status: number, body: unknown): Promise<void> {
   await redis.setWithTTL(cacheKey, {
     processing: false, status, body
   }, IDEMPOTENCY_RESULT_TTL_SECONDS);
+  trace('info', 'idempotency.save', `Stored ${status} response for ${cacheKey.replace('idempotency:', 'key ')}`);
 }
 
-/** Called by the handler if the deposit failed, so the same key can be retried cleanly. */
 export async function releaseIdempotencyClaim(cacheKey: string): Promise<void> {
   await redis.delete(cacheKey);
+  trace('warn', 'idempotency.release', `Released ${cacheKey.replace('idempotency:', 'key ')} after failure — safe to retry`);
 }
