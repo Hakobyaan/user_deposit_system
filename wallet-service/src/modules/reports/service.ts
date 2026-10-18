@@ -8,14 +8,7 @@ import { ReportRepository, ReportRecord } from './repository';
 const repository = new ReportRepository();
 
 class ReportService {
-  /**
-   * Spawns a Worker Thread and returns immediately with a reportId — the
-   * caller never waits for the heavy work. Because the Wallet Service runs
-   * under Cluster, "immediately" and "later" can be two different OS
-   * processes, so progress is tracked in Redis (shared across every
-   * cluster worker), not an in-memory Map (private to whichever worker
-   * happened to spawn this Worker Thread).
-   */
+
    public async generate(userId: number): Promise<string> {
     const reportId = uuid();
     await repository.setStatus(reportId, {
